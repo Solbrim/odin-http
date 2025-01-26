@@ -124,7 +124,7 @@ Default_Endpoint := net.Endpoint {
 	address = net.IP4_Any,
 	port    = 8080,
 }
-
+import tracy "../odin-tracy"
 listen :: proc(
 	s: ^Server,
 	endpoint: net.Endpoint = Default_Endpoint,
@@ -140,6 +140,7 @@ listen :: proc(
 	// TODO: error handling.
 	assert(errno == os.ERROR_NONE)
 
+	tracy.ZoneN("listen > nbio.open_and_listen_tcp");
 	s.tcp_sock, err = nbio.open_and_listen_tcp(&td.io, endpoint)
 	if err != nil { server_shutdown(s) }
 	return
@@ -149,9 +150,14 @@ serve :: proc(s: ^Server, h: Handler) -> (err: net.Network_Error) {
 	s.handler = h
 
 	thread_count := max(0, s.opts.thread_count - 1)
+
+	log.info("Thread count:", thread_count);
+
+	tracy.ZoneN("serve > sync.wait_group_add");
 	sync.wait_group_add(&s.threads_closed, thread_count)
 	s.threads = make([]^thread.Thread, thread_count, s.conn_allocator)
 	for i in 0 ..< thread_count {
+		tracy.ZoneN("serve > thread.create_and_start_with_poly_data");
 		s.threads[i] = thread.create_and_start_with_poly_data(s, _server_thread_init, context)
 	}
 
@@ -179,10 +185,12 @@ listen_and_serve :: proc(
 	opts: Server_Opts = Default_Server_Opts,
 ) -> (err: net.Network_Error) {
 	listen(s, endpoint, opts) or_return
+	tracy.ZoneN("listen_and_serve > serve")
 	return serve(s, h)
 }
 
 _server_thread_init :: proc(s: ^Server) {
+	tracy.ZoneN("_server_thread_init");
 	td.conns = make(map[net.TCP_Socket]^Connection)
 	// td.free_temp_blocks = make(map[int]queue.Queue(^Block))
 
@@ -198,10 +206,12 @@ _server_thread_init :: proc(s: ^Server) {
 
 	log.debug("starting event loop")
 	td.state = .Serving
+
 	for {
 		if atomic_load(&s.closing) do _server_thread_shutdown(s)
 		if td.state == .Closed do break
 		if td.state == .Cleaning do continue
+
 
 		errno := nbio.tick(&td.io)
 		if errno != os.ERROR_NONE {
@@ -409,6 +419,7 @@ connection_close :: proc(c: ^Connection, loc := #caller_location) {
 
 @(private)
 on_accept :: proc(server: rawptr, sock: net.TCP_Socket, source: net.Endpoint, err: net.Network_Error) {
+	tracy.ZoneN("on_accept");
 	server := cast(^Server)server
 
 	if err != nil {

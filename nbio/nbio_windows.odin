@@ -47,32 +47,48 @@ _num_waiting :: #force_inline proc(io: ^IO) -> int {
 	return io.completion_pool.num_waiting
 }
 
+_only_accepting :: proc(io: ^IO) -> bool
+{
+	for x := 0; x < queue.len(io.completed); x += 1 {
+		if _, ok := io.completed.data[x].op.(Op_Accept); !ok
+		{
+			return false
+		}
+	}
+
+	return true;
+}
+
 _tick :: proc(io: ^IO) -> (err: os.Errno) {
+
 	if queue.len(io.completed) == 0 {
 		next_timeout := flush_timeouts(io)
 
+		nt, ok := next_timeout.?;
+
 		// Wait a maximum of a ms if there is nothing to do.
-		// TODO: this is pretty naive, a typical server always has accept completions pending and will be at 100% cpu.
-		wait_ms: win.DWORD = 1 if io.io_pending == 0 else 0
+		// wait current timeout; if not available, default to 1000ms if io completed queue is only accepting
+		wait_ms: win.DWORD = cast(u32)time.duration_milliseconds(nt) if ok else 1000 if _only_accepting(io) else 0;
 
 		// But, to counter inaccuracies in low timeouts,
 		// lets make the call exit immediately if the next timeout is close.
-		if nt, ok := next_timeout.?; ok && nt <= time.Millisecond * 15 {
+		if ok && nt <= time.Millisecond * 15 {
 			wait_ms = 0
 		}
 
 		events: [256]win.OVERLAPPED_ENTRY
 		entries_removed: win.ULONG
+
 		if !win.GetQueuedCompletionStatusEx(io.iocp, &events[0], len(events), &entries_removed, wait_ms, false) {
 			if terr := win.GetLastError(); terr != win.WAIT_TIMEOUT {
 				err = os.Platform_Error(terr)
 				return
 			}
+		} else
+		{
+			io.io_pending -= int(entries_removed)
 		}
-
-		// assert(io.io_pending >= int(entries_removed))
-		io.io_pending -= int(entries_removed)
-
+		
 		for event in events[:entries_removed] {
 			if event.lpOverlapped == nil {
 				@static logged: bool
@@ -81,7 +97,8 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 					logged = true
 				}
 
-				io.io_pending += 1
+				// log.info("wait_ms:", wait_ms, "entries_removed:", entries_removed, "win_get_res:", win_get_res, "io.iocp:", io.iocp, "len(events)", len(events));
+				// io.io_pending += 1
 				continue
 			}
 
@@ -100,6 +117,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 		handle_completion(io, completion)
 	}
+
 	return
 }
 
