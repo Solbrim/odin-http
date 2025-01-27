@@ -56,6 +56,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 		// Wait a maximum of a ms if there is nothing to do.
 		// wait current timeout; if not available, default to 1000ms if io completed queue is only accepting
+		//	 Looking into this more; it seems like GetQueuedCompletionStatusEx will return early regardless of how long the dwell-time is if there are completed events available
 		wait_ms: win.DWORD = cast(u32)time.duration_milliseconds(nt) if ok else 1000
 
 		// But, to counter inaccuracies in low timeouts,
