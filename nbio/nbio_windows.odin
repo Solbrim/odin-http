@@ -47,18 +47,6 @@ _num_waiting :: #force_inline proc(io: ^IO) -> int {
 	return io.completion_pool.num_waiting
 }
 
-_only_accepting :: proc(io: ^IO) -> bool
-{
-	for x := 0; x < queue.len(io.completed); x += 1 {
-		if _, ok := io.completed.data[x].op.(Op_Accept); !ok
-		{
-			return false
-		}
-	}
-
-	return true;
-}
-
 _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 	if queue.len(io.completed) == 0 {
@@ -68,7 +56,7 @@ _tick :: proc(io: ^IO) -> (err: os.Errno) {
 
 		// Wait a maximum of a ms if there is nothing to do.
 		// wait current timeout; if not available, default to 1000ms if io completed queue is only accepting
-		wait_ms: win.DWORD = cast(u32)time.duration_milliseconds(nt) if ok else 1000 if _only_accepting(io) else 0;
+		wait_ms: win.DWORD = cast(u32)time.duration_milliseconds(nt) if ok else 1000
 
 		// But, to counter inaccuracies in low timeouts,
 		// lets make the call exit immediately if the next timeout is close.
